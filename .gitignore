@@ -1,0 +1,21 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# --- virtualenvs ---
+.venv/
+venv/
+
+# --- OS ---
+.DS_Store
+
+# --- Inputs & generated outputs (keep local, do not commit) ---
+# Anna's compound sheet + the derived ADMET report:
+anna_top_15.csv
+anna_admet_report.md
+anna_admet_report.pdf
+
+# CLI / scratch outputs:
+admet_results.csv
+test_out.csv

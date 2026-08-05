@@ -1,0 +1,7 @@
+# ADMET-AI local prediction client (admet_ai_client.py)
+# Installs torch, rdkit, chemprop, pandas, numpy, etc. transitively (~0.5-1 GB).
+admet-ai>=2.0.1       # bundles the 13 MB of Chemprop v2 model weights in the wheel
+openpyxl>=3.1         # only needed for .xlsx input
+
+# Legacy admetlab3_client.py (server-based, currently abandoned) also needs:
+# requests>=2.31
