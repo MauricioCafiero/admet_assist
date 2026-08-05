@@ -7,6 +7,9 @@ __pycache__/
 .venv/
 venv/
 
+# --- model weights (fetched locally, not committed; ~74 MB for admetica) ---
+models/
+
 # --- OS ---
 .DS_Store
 
@@ -15,7 +18,13 @@ venv/
 anna_top_15.csv
 anna_admet_report.md
 anna_admet_report.pdf
+# Admetica-vs-ADMET-AI mesh comparison (derived from Anna's data):
+anna_admet_ai.csv
+anna_admetica.csv
+anna_admetica_addendum.md
+anna_admetica_addendum.pdf
 
 # CLI / scratch outputs:
 admet_results.csv
+admetica_results.csv
 test_out.csv

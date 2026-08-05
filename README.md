@@ -13,19 +13,24 @@ returning 502). That file is kept for reference but is not the active path.
 
 ```
 admet/
-├── code/                  # Python entry points (tracked)
-│   ├── admet_ai_client.py # batch CLI -> CSV
-│   ├── admet_tool.py      # LLM-callable tool -> string
-│   ├── admetlab3_client.py# legacy server client (abandoned, kept for reference)
-│   └── make_pdf.py        # markdown -> PDF (run with the moltui mt-env python, which has reportlab)
+├── code/                       # Python entry points (tracked)
+│   ├── admet_ai_client.py      # ADMET-AI batch CLI -> CSV (primary, 52 endpoints)
+│   ├── admet_tool.py           # ADMET-AI LLM-callable tool -> string
+│   ├── admetica_client.py      # Admetica batch CLI -> CSV (22 endpoints, independent 2nd opinion)
+│   ├── admetica_tool.py        # Admetica LLM-callable tool -> string
+│   ├── setup_admetica_models.sh# one-time fetch + convert of the Admetica checkpoints
+│   ├── admetlab3_client.py     # legacy server client (abandoned, kept for reference)
+│   └── make_pdf.py             # markdown -> PDF (run with the moltui mt-env python, which has reportlab)
+├── models/admetica/            # converted Admetica .pt + ad_vectors.json (gitignored, ~74 MB)
 ├── requirements.txt
 ├── README.md
-├── anna_top_15.csv        # input compound sheet (gitignored — local only)
-└── anna_admet_report.{md,pdf} # generated ADMET report (gitignored — local only)
+├── anna_top_15.csv             # input compound sheet (gitignored — local only)
+└── anna_admet_report.{md,pdf}  # generated ADMET report (gitignored — local only)
 ```
 
-`.venv/`, `__pycache__/`, `anna_top_15.csv` and the generated `anna_admet_report.*` are in
-`.gitignore` (Anna's compound data and the derived report stay local, not committed).
+`.venv/`, `__pycache__/`, `models/`, `anna_top_15.csv` and the generated
+`anna_admet_report.*` are in `.gitignore` (Anna's compound data, the derived report,
+and the fetched model weights stay local, not committed).
 
 ## Download & install
 
@@ -168,3 +173,124 @@ machine.
 
 admet-ai 2.0.1 · chemprop 2.3.1 · torch 2.13.0 · rdkit 2026.3.4 · Python 3.14.5,
 macOS arm64.
+
+---
+
+# admetica_client (independent second opinion)
+
+A second, **independent** ADMET predictor built on [Admetica](https://github.com/datagrok-ai/admetica)
+(Datagrok, MIT) — 22 per-endpoint Chemprop v2 models trained on different datasets than
+ADMET-AI. Useful as a cross-check on shared endpoints and the **only** source here for
+CYP1A2-substrate, CYP2C19-substrate and Pgp-substrate (ADMET-AI doesn't model those).
+Runs in the **same `.venv`** as ADMET-AI — no extra dependencies, no second venv.
+
+We do **not** `pip install admetica`: that package hard-pins `chemprop==2.0.0`,
+`torch==2.4.0`, `numpy==1.26.4` (none have Python 3.14 wheels) and drags in Flask for a
+web server we don't use. Instead we pull just the 22 checkpoints from the
+`admetica==1.4.1` sdist, convert each once to Chemprop v2.1, and load the `.pt` files
+directly with chemprop 2.3.1.
+
+## One-time model setup
+
+```sh
+PATH="$PWD/.venv/bin:$PATH" bash code/setup_admetica_models.sh
+```
+
+Downloads the sdist (74 MB, sha256-pinned), extracts the 22 `.ckpt` files, converts each
+to `.pt` with `chemprop convert --conversion v2_0_to_v2_1`, and writes the
+applicability-domain mean vectors to `models/admetica/ad_vectors.json`. Output is
+gitignored under `models/admetica/`. Requires the `chemprop` CLI on PATH (from the venv
+you already installed for ADMET-AI).
+
+## Run
+
+Same two entry-point shape as ADMET-AI: a batch **CLI client** (`admetica_client.py`,
+writes CSV) and an **LLM tool** (`admetica_tool.py`, returns a text string).
+
+### CLI client — `admetica_client.py`
+
+```sh
+# SMILES on the command line (all 22 endpoints + AD scores)
+.venv/bin/python code/admetica_client.py --smiles "CC(=O)Oc1ccccc1C(=O)O" CCO -o admetica.csv
+
+# from a .csv with a SMILES column
+.venv/bin/python code/admetica_client.py --input data.csv --smiles-column smiles -o admetica.csv
+
+# only some endpoints (comma-joined or repeated; case-insensitive)
+.venv/bin/python code/admetica_client.py --input data.csv --properties Caco2,hERG,LD50 -o admetica.csv
+
+# drop the applicability-domain columns
+.venv/bin/python code/admetica_client.py --input data.csv --no-ad -o admetica.csv
+```
+
+Flags:
+
+| Flag | Default | Purpose |
+|---|---|---|
+| `--input` | — | `.smi`/`.txt`/`.csv`/`.xlsx` of SMILES |
+| `--smiles-column` | auto (first `smiles`-like col) | column name in a `.csv`/`.xlsx` |
+| `--smiles` | — | one or more SMILES on the CLI |
+| `--output` / `-o` | `admetica_results.csv` | output CSV path |
+| `--properties` | all 22 | endpoints to predict (comma-joined and/or repeated) |
+| `--device` | `cpu` | `cpu` \| `mps` \| `auto` (cpu recommended; these are single tiny MPNNs) |
+| `--no-ad` | off | drop the `<endpoint>_AD` applicability-domain columns |
+
+Invalid SMILES are dropped with a `WARNING` on stderr (RDKit-prefiltered); the rest are
+predicted and written.
+
+### LLM tool — `admetica_tool.py`
+
+`predict_admetica(smiles, properties=None, include_ad=True)` — one SMILES string or a
+list (batch), returns a **string** (one block per molecule, `Endpoint: value [val|prob,
+AD x.xxx]` lines). Invalid SMILES produce a per-molecule error line, never fatal. A
+ready-to-wire tool definition is exported as `ADMETICA_TOOL_SCHEMA`.
+
+```sh
+.venv/bin/python code/admetica_tool.py "CCO" "CC(=O)Oc1ccccc1C(=O)O"
+```
+
+```python
+import sys; sys.path.insert(0, "code")
+from admetica_tool import predict_admetica, ADMETICA_TOOL_SCHEMA
+print(predict_admetica(["CCO", "CC(=O)Oc1ccccc1C(=O)O"], include_ad=True))
+```
+
+## Output
+
+One row per molecule. By default **38 columns**: input `smiles`, then 22 endpoint value
+columns, then 15 `<endpoint>_AD` columns (one per endpoint that has a training-set mean
+vector). With `--no-ad` this drops to 23; selecting a `--properties` subset narrows
+accordingly.
+
+The 22 endpoints (Absorption → Distribution → Metabolism → Excretion → Toxicity):
+
+- **Absorption**: `Caco2`, `Lipophilicity`, `Solubility` (regression), `Pgp-Inhibitor`,
+  `Pgp-Substrate` (classification)
+- **Distribution**: `PPBR`, `VDss` (regression)
+- **Metabolism**: `CYP1A2/2C19/2C9/2D6/3A4-Inhibitor` & `-Substrate` (10, classification)
+- **Excretion**: `CL-Hepa`, `CL-Micro`, `Half-Life` (regression)
+- **Toxicity**: `hERG` (classification), `LD50` (regression)
+
+Classification endpoints (13) are probabilities in [0, 1]; regression endpoints (9) are
+predicted values in the endpoint's native units. The **AD** column is the cosine
+similarity between the molecule's Morgan fingerprint (r=2, 1024 bits) and the endpoint's
+training-set mean fingerprint — higher means more in-domain (~[0,1]). Treat a prediction
+as low-confidence when its AD score is well below the bulk (e.g. ethanol's `PPBR` comes
+out -258.5 with AD 0.30 — clearly out of domain).
+
+> **Note on the AD score:** upstream Admetica's `include_probability` is effectively dead
+> code — it lowercases the model name before looking up the *capitalized* mean-vector
+> keys, so it always returns 0.0, and the CLI hard-codes it off. This client does the
+> lookup correctly, so the `_AD` columns here are real.
+
+## How it works
+
+`AdmeticaPredictor` loads each converted `.pt` with `chemprop.models.MPNN.load_from_checkpoint`
+and runs it via `lightning.Trainer.predict`, one endpoint at a time. AD scores are
+computed with RDKit Morgan fingerprints + a per-endpoint mean vector. Nothing leaves the
+machine.
+
+## Versions tested
+
+admetica 1.4.1 (model checkpoints only; package not installed) · chemprop 2.3.1 ·
+torch 2.13.0 · rdkit 2026.3.4 · Python 3.14.5, macOS arm64.

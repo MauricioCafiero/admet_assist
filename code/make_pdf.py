@@ -6,9 +6,10 @@ Platypus flowables, explicit column widths). Generalised for this report:
 landscape A4 (it has an 18-column summary table), content-adaptive column
 widths, emoji -> ASCII (Helvetica has no emoji glyphs), and ####/italic support.
 
-Run: /Users/cafierom/python_mac/moltui/mt-env/bin/python code/make_pdf.py
+Run: /Users/cafierom/python_mac/moltui/mt-env/bin/python code/make_pdf.py [in.md] [out.pdf]
+(Defaults to anna_admet_report.md -> anna_admet_report.pdf.)
 """
-import pathlib, re
+import pathlib, re, sys
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.units import cm
 from reportlab.lib import colors
@@ -17,8 +18,14 @@ from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer,
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent  # repo root (code/ is one level down)
-MD_IN = ROOT / "anna_admet_report.md"
-PDF_OUT = ROOT / "anna_admet_report.pdf"
+_default_md = ROOT / "anna_admet_report.md"
+_default_pdf = ROOT / "anna_admet_report.pdf"
+
+if len(sys.argv) > 1:
+    MD_IN = pathlib.Path(sys.argv[1])
+    PDF_OUT = pathlib.Path(sys.argv[2]) if len(sys.argv) > 2 else MD_IN.with_suffix(".pdf")
+else:
+    MD_IN, PDF_OUT = _default_md, _default_pdf
 md = MD_IN.read_text().splitlines()
 
 styles = getSampleStyleSheet()
@@ -71,7 +78,9 @@ def col_widths(header, rows):
         for r in rows:
             if c < len(r):
                 w = max(w, len(str(r[c])) + 1)
-        weights.append(max(min(w, 40), 3))
+        # cap wide text cols (wrap instead of hogging width), floor short cols
+        # high enough that narrow headers like "[+]"/"[!]" don't split across lines
+        weights.append(max(min(w, 30), 7))
     total = sum(weights)
     return [PAGE_W * (w / total) for w in weights]
 
