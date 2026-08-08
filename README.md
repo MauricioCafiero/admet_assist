@@ -22,6 +22,7 @@ admet/
 │   ├── admetica_client.py      # Admetica batch CLI -> CSV (22 endpoints)
 │   ├── admetica_tool.py        # Admetica LLM-callable tool -> string
 │   ├── setup_admetica_models.sh# one-time fetch + convert of the Admetica checkpoints
+│   ├── max_dosage.py           # post-process LD50 -> LD50/NOAEL/MTD + feed-inclusion dose
 │   ├── make_pdf.py             # markdown -> PDF (run with the moltui mt-env python, which has reportlab)
 │   └── admetlab3_client.py     # legacy server client (kept for reference, not used)
 ├── models/admetica/            # converted Admetica .pt + ad_vectors.json (gitignored, ~74 MB)
@@ -147,6 +148,58 @@ clearly out of domain).
   (10, classification)
 - **Excretion**: `CL-Hepa`, `CL-Micro`, `Half-Life` (regression)
 - **Toxicity**: `hERG` (classification), `LD50` (regression)
+
+## Maximum dosage from LD50
+
+`code/max_dosage.py` is a pure post-processor — no model is loaded. It reads the
+`LD50_Zhu` column (ADMET-AI) and/or the `LD50` column (Admetica) from the result
+CSVs, computes MW from SMILES with RDKit, and writes derived dose columns. Both
+LD50 endpoints are rat oral LD50 on the scale `log10(1/(mol/kg))`, so:
+
+```
+LD50_mg_per_kg = 10**(-v) * MW * 1000        # v = predicted LD50, MW in g/mol
+NOAEL_mg_per_kg = LD50_mg_per_kg / 10         # fixed LD50->NOAEL heuristic
+MTD_mg_per_kg   = LD50_mg_per_kg / safety_factor   # --safety-factor, default 10
+MTD_mg_per_head_per_day = MTD_mg_per_kg * body_weight
+MTD_mg_per_kg_feed      = MTD_mg_per_head_per_day / feed_intake   # inclusion rate
+```
+
+```sh
+.venv/bin/python code/max_dosage.py \
+  --admet-ai admet.csv --admetica admetica.csv \
+  --body-weight 660 --feed-intake 20 -o dosage.csv
+.venv/bin/python code/max_dosage.py --admet-ai admet.csv --safety-factor 3 -o dosage.csv
+```
+
+Sources join on canonical SMILES, so one or both CSVs can be passed. Defaults
+are cattle (`--body-weight 500`, `--feed-intake 20`). At the default
+`--safety-factor 10`, `MTD_mg_kg` equals `NOAEL_mg_kg`; lower the factor for a
+less conservative max-tolerated ceiling.
+
+> **Warning — these are screening estimates, not administered doses.** The Zhu
+> LD50 model is weak (R² ≈ 0.60, MAE ≈ 0.45 log units, per ADMET-AI metadata), so
+> every number below is a rank-order ceiling, not a real tox value. The two
+> sources also disagree in absolute terms (a <1-log gap is ~8× in mg/kg) — read
+> them as two independent estimates, not a consensus.
+
+### Worked example — 660 kg cow, 20 kg feed/day
+
+Derived from the MCR-inhibitor baseline (`mcr_inhibitor_baseline_admet_ai.csv` /
+`mcr_inhibitor_baseline_admetica.csv`), `--body-weight 660 --feed-intake 20`,
+`--safety-factor 10`:
+
+| Compound | Source | LD50 (mg/kg) | NOAEL (mg/kg) | MTD (mg/kg) | MTD (g/head/day) | MTD (g/kg feed) |
+|---|---|---:|---:|---:|---:|---:|
+| **3-NOP** | ADMET-AI | 1467 | 147 | 147 | 96.8 | 4.84 |
+| **3-NOP** | Admetica | 166 | 16.6 | 16.6 | 11.0 | 0.55 |
+| **rosmarinic acid** | ADMET-AI | 3729 | 373 | 373 | 246 | 12.3 |
+| **rosmarinic acid** | Admetica | 11450 | 1145 | 1145 | 756 | 37.8 |
+
+3-NOP is the commercial feed-additive MCR inhibitor; its predicted MTD ceilings
+(0.55–4.8 g/kg feed) sit well above the actual ~mg/head/day inclusion rate
+Bovaer uses, as expected for a max-tolerated estimate derived from a weak LD50
+model. The two sources disagree ~9× on 3-NOP (the 0.95-log gap) — the
+second-opinion signal `max_dosage.py` is meant to surface.
 
 ## Admetica setup
 

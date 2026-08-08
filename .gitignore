@@ -23,6 +23,11 @@ anna_admet_ai.csv
 anna_admetica.csv
 anna_admetica_addendum.md
 anna_admetica_addendum.pdf
+# LD50-derived dosage estimates (derived from Anna's + baseline ADMET CSVs):
+anna_dosage.md
+anna_dosage.pdf
+anna_dosage.csv
+baseline_dosage.csv
 
 # CLI / scratch outputs:
 admet_results.csv
